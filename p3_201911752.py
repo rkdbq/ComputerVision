@@ -8,7 +8,7 @@ from tensorflow.keras.optimizers import Adam
 
 class Resnet_block(tf.keras.Model):
     def __init__(self, filters, kernel_size, activation, is_conv=False):
-        super(Id, self).__init__()
+        super(Resnet_block, self).__init__()
 
         self.is_conv = is_conv
     
