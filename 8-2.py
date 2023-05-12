@@ -3,33 +3,8 @@ import tensorflow as tf
 import tensorflow.keras.datasets as ds
 
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D,MaxPooling2D,GlobalAveragePooling2D,Flatten,Dense,Dropout
+from tensorflow.keras.layers import Conv2D,MaxPooling2D,Flatten,Dense,Dropout
 from tensorflow.keras.optimizers import Adam
-
-class Resnet_block(tf.keras.Model):
-    def __init__(self, filters, kernel_size, activation, is_conv=False):
-        super(Resnet_block, self).__init__()
-
-        self.is_conv = is_conv
-    
-        self.conv1 = Conv2D(filters, kernel_size, padding="same", activation=activation)
-        self.conv2 = Conv2D(filters, kernel_size, padding="same", activation=activation)
-        self.conv_input = Conv2D(filters, kernel_size, padding="same", activation=activation)
-
-        self.activation = tf.keras.layers.Activation(activation)
-        self.add = tf.keras.layers.Add()
-
-    def call(self, input_shape):
-        if self.is_conv == True:
-            input_shape = self.conv_input(input_shape)
-
-        x = self.conv1(input_shape)
-        x = self.conv2(x)
-
-        x = self.add([x, input_shape])
-        x = self.activation(x)
-
-        return x
 
 with tf.device("/gpu:0"):
     (x_train,y_train),(x_test,y_test)=ds.cifar10.load_data()
@@ -39,17 +14,14 @@ with tf.device("/gpu:0"):
     y_test=tf.keras.utils.to_categorical(y_test,10)
 
     cnn=Sequential()
-    cnn.add(Conv2D(32,(7,7),padding='same',activation='relu',input_shape=(32,32,3)))
+    cnn.add(Conv2D(64,(3,3),activation='relu',input_shape=(32,32,3)))
+    cnn.add(Conv2D(32,(3,3),activation='relu'))
     cnn.add(MaxPooling2D(pool_size=(2,2)))
     cnn.add(Dropout(0.25))
-    cnn.add(Resnet_block(64,(3,3),activation='relu',is_conv=True))
+    cnn.add(Conv2D(64,(3,3),activation='relu'))
+    cnn.add(Conv2D(64,(3,3),activation='relu'))
     cnn.add(MaxPooling2D(pool_size=(2,2)))
     cnn.add(Dropout(0.25))
-    cnn.add(Resnet_block(128,(3,3),activation='relu',is_conv=True))
-    cnn.add(MaxPooling2D(pool_size=(2,2)))
-    cnn.add(Dropout(0.25))
-    cnn.add(Resnet_block(256,(3,3),activation='relu',is_conv=True))
-    cnn.add(GlobalAveragePooling2D())
     cnn.add(Flatten())
     cnn.add(Dense(units=512,activation='relu'))
     cnn.add(Dropout(0.5))
