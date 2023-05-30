@@ -132,7 +132,7 @@ while og_video_capture.isOpened():
     cv2.imshow('Og', draw_landmarks_on_image(og_image.numpy_view(), og_landmarker_result))
     cv2.imshow('Prac', draw_landmarks_on_image(prac_image.numpy_view(), prac_landmarker_result))
 
-    delay = int(1000 / (og_video_capture.get(cv2.CAP_PROP_FPS)  * playback_speed))
+    delay = int(1000 / (og_video_capture.get(cv2.CAP_PROP_FPS) * playback_speed))
 
     print(np.mean(landmark_losses))
 
