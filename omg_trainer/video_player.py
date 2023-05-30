@@ -6,7 +6,6 @@ from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt, QTimer
 from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
-from mediapipe.tasks import vision
 
 def draw_landmarks_on_image(rgb_image, detection_result):
   if detection_result is None:
@@ -34,18 +33,6 @@ def draw_landmarks_on_image(rgb_image, detection_result):
 class VideoPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
-
-        # BaseOptions = mp.tasks.BaseOptions
-        # PoseLandmarker = mp.tasks.vision.PoseLandmarker
-        # PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-        # # PoseLandmarkerResult = mp.tasks.vision.PoseLandmarkerResult
-        # VisionRunningMode = mp.tasks.vision.RunningMode
-
-        #
-        self.og_options = PoseLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path='pose_landmarker_lite.task'),
-            running_mode=VisionRunningMode.VIDEO)
-        self.og_landmarker = PoseLandmarker.create_from_options(self.og_options)
 
         # 윈도우 설정
         self.setWindowTitle("Video Player")
@@ -108,6 +95,12 @@ class VideoPlayer(QMainWindow):
         self.playback_speed = value / 5.0
 
     def update_frame(self):
+
+        og_options = mp.tasks.vision.PoseLandmarker(
+            base_options=mp.tasks.BaseOptionsOptions(model_asset_path='pose_landmarker_lite.task'),
+            running_mode=mp.tasks.vision.RunningMode.VIDEO)
+        og_landmarker = mp.tasks.vision.PoseLandmarker.create_from_options(og_options)
+
         # 비디오 프레임 읽기
         timestamp = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
         ret, og_frame = self.cap.read()
@@ -121,7 +114,7 @@ class VideoPlayer(QMainWindow):
         # frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         og_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=og_frame)
-        og_landmarker_result = self.og_landmarker.detect_for_video(og_image, timestamp)
+        og_landmarker_result = og_landmarker.detect_for_video(og_image, timestamp)
         frame_rgb = draw_landmarks_on_image(og_image.numpy_view(), og_landmarker_result)
 
         height, width, channels = frame_rgb.shape
