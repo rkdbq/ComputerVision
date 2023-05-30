@@ -1,8 +1,19 @@
+import mediapipe as mp
+import cv2
+import numpy as np
 from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
-import numpy as np
+
+BaseOptions = mp.tasks.BaseOptions
+PoseLandmarker = mp.tasks.vision.PoseLandmarker
+PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
+PoseLandmarkerResult = mp.tasks.vision.PoseLandmarkerResult
+VisionRunningMode = mp.tasks.vision.RunningMode
 
 def draw_landmarks_on_image(rgb_image, detection_result):
+  if detection_result is None:
+    return rgb_image
+  
   pose_landmarks_list = detection_result.pose_landmarks
   annotated_image = np.copy(rgb_image)
 
@@ -22,102 +33,112 @@ def draw_landmarks_on_image(rgb_image, detection_result):
       solutions.drawing_styles.get_default_pose_landmarks_style())
   return annotated_image
 
-import cv2
+prac_landmarker_result = None
 
-# STEP 1: Import the necessary modules.
-import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
+def print_result(result: PoseLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
+    global prac_landmarker_result
+    prac_landmarker_result = result
 
-# STEP 2: Create an PoseLandmarker object.
-base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
-options = vision.PoseLandmarkerOptions(
-    base_options=base_options,
-    output_segmentation_masks=True)
-detector = vision.PoseLandmarker.create_from_options(options)
+def calculate_loss(landmark_losses, og_detection_result, prac_detection_result):
+  if prac_detection_result is None:
+     return landmark_losses
+  if len(og_detection_result.pose_landmarks) > 0 and len(prac_detection_result.pose_landmarks) > 0:
+    og_pose_landmarks = og_detection_result.pose_landmarks[0]
+    prac_pose_landmarks = prac_detection_result.pose_landmarks[0]
 
-# Open the video file
-og_video_path = "//Users//rkdbg//Codes//CV//omg_trainer//omg1.mp4"
-og_video_capture = cv2.VideoCapture(og_video_path)
+    landmark_loss = []
+    for og_landmark, prac_landmark in zip(og_pose_landmarks, prac_pose_landmarks):
+        og = np.array([og_landmark.x, og_landmark.y, og_landmark.z, og_landmark.visibility])
+        prac = np.array([prac_landmark.x, prac_landmark.y, prac_landmark.z, prac_landmark.visibility])
+        loss = np.mean((og - prac)**2)
+        landmark_loss.append(loss)
 
-my_video_path = "//Users//rkdbg//Codes//CV//omg_trainer//omg2.mp4"
-my_video_capture = cv2.VideoCapture(my_video_path)
+    landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
 
+  elif len(og_detection_result.pose_landmarks) > 0:
+    og_pose_landmarks = og_detection_result.pose_landmarks[0]
+
+    landmark_loss = []
+    for og_landmark in og_pose_landmarks:
+        og = np.array([og_landmark.x, og_landmark.y, og_landmark.z, og_landmark.visibility])
+        loss = np.mean(og**2)
+        landmark_loss.append(loss)
+
+    landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
+
+  elif len(prac_detection_result.pose_landmarks) > 0:
+    prac_pose_landmarks = prac_detection_result.pose_landmarks[0]
+
+    landmark_loss = []
+    for prac_landmark in prac_pose_landmarks:
+      prac = np.array([prac_landmark.x, prac_landmark.y, prac_landmark.z, prac_landmark.visibility])
+      loss = np.mean(prac**2)
+      landmark_loss.append(loss)
+
+    landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
+
+  else:
+    landmark_losses = np.vstack((landmark_losses, np.zeros((1, 33)))) 
+
+  return landmark_losses
+
+og_options = PoseLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path='pose_landmarker_lite.task'),
+    running_mode=VisionRunningMode.VIDEO)
+
+prac_options = PoseLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path='pose_landmarker_lite.task'),
+    running_mode=VisionRunningMode.LIVE_STREAM,
+    result_callback=print_result)
+
+og_landmarker = PoseLandmarker.create_from_options(og_options)
+prac_landmarker = PoseLandmarker.create_from_options(prac_options)
 landmark_losses = np.empty((0, 33), float)
 
-# Check if the video file is successfully opened
-if not og_video_capture.isOpened() and not my_video_capture.isOpened():
+og_video_path = "//Users//rkdbg//Codes//CV//omg_trainer//omg1.mp4"
+og_video_capture = cv2.VideoCapture(og_video_path)
+playback_speed = 1.75
+
+prac_video_capture = cv2.VideoCapture(0)
+
+frame_width = int(prac_video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+frame_height = int(prac_video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+fps = int(prac_video_capture.get(cv2.CAP_PROP_FPS))
+codec = cv2.VideoWriter_fourcc(*'XVID')  # 비디오 코덱 설정 (여기서는 XVID를 사용)
+
+# prac_recorded = cv2.VideoWriter('practice.avi', codec, fps, (frame_width, frame_height))
+
+if not og_video_capture.isOpened():
     print("Error opening video file")
     exit()
 
-# Read the video frames until the end of the video
-while og_video_capture.isOpened() and my_video_capture.isOpened():
-    # Read a single frame from the video
+while og_video_capture.isOpened():
+    timestamp = int(og_video_capture.get(cv2.CAP_PROP_POS_FRAMES))
+
     og_ret, og_frame = og_video_capture.read()
-    my_ret, my_frame = my_video_capture.read()
+    prac_ret, prac_frame = prac_video_capture.read()
 
-    # If the frame is not read properly, break the loop
-    if not og_ret or not my_ret:
+    if not og_ret:
+       break
+
+    og_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=og_frame)
+    og_landmarker_result = og_landmarker.detect_for_video(og_image, timestamp)
+
+    prac_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=prac_frame)
+    prac_landmarker.detect_async(prac_image, timestamp)
+
+    landmark_losses = calculate_loss(landmark_losses, og_landmarker_result, prac_landmarker_result)
+
+    cv2.imshow('Og', draw_landmarks_on_image(og_image.numpy_view(), og_landmarker_result))
+    cv2.imshow('Prac', draw_landmarks_on_image(prac_image.numpy_view(), prac_landmarker_result))
+
+    delay = int(1000 / (og_video_capture.get(cv2.CAP_PROP_FPS)  * playback_speed))
+
+    print(np.mean(landmark_losses))
+
+    if cv2.waitKey(delay) & 0xFF == ord('q'):
         break
 
-    # Convert the frame to RGB
-    og_frame_rgb = mp.Image(mp.ImageFormat.SRGB, og_frame)
-    my_frame_rgb = mp.Image(mp.ImageFormat.SRGB, my_frame)
-
-    # Process the frame and get the pose landmarks
-    og_detection_result = detector.detect(og_frame_rgb)
-    my_detection_result = detector.detect(my_frame_rgb)
-
-    og_annotated_frame = draw_landmarks_on_image(og_frame_rgb.numpy_view(), og_detection_result)
-    my_annotated_frame = draw_landmarks_on_image(my_frame_rgb.numpy_view(), my_detection_result)
-
-    # Draw the pose landmarks on the frame (example visualization)
-    if len(og_detection_result.pose_landmarks) > 0 and len(my_detection_result.pose_landmarks) > 0:
-        og_pose_landmarks = og_detection_result.pose_landmarks[0]
-        my_pose_landmarks = my_detection_result.pose_landmarks[0]
-
-        landmark_loss = []
-        for og_landmark, my_landmark in zip(og_pose_landmarks, my_pose_landmarks):
-            og = np.array([og_landmark.x, og_landmark.y, og_landmark.z, og_landmark.visibility])
-            my = np.array([my_landmark.x, my_landmark.y, my_landmark.z, my_landmark.visibility])
-            loss = np.mean((og - my)**2)
-            landmark_loss.append(loss)
-        landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
-
-    elif len(og_detection_result.pose_landmarks) > 0:
-       og_pose_landmarks = og_detection_result.pose_landmarks[0]
-
-       landmark_loss = []
-       for og_landmark in og_pose_landmarks:
-          og = np.array([og_landmark.x, og_landmark.y, og_landmark.z, og_landmark.visibility])
-          loss = np.mean(og**2)
-          landmark_loss.append(loss)
-
-       landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
-
-    elif len(my_detection_result.pose_landmarks) > 0:
-       my_pose_landmarks = my_detection_result.pose_landmarks[0]
-
-       landmark_loss = []
-       for my_landmark in my_pose_landmarks:
-          my = np.array([my_landmark.x, my_landmark.y, my_landmark.z, my_landmark.visibility])
-          loss = np.mean(my**2)
-          landmark_loss.append(loss)
-
-       landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
-
-    else:
-       landmark_losses = np.vstack((landmark_losses, np.zeros((1, 33))))   
-        
-    # Display the resulting frame
-    cv2.imshow('OG', og_annotated_frame)
-    cv2.imshow('MY', my_annotated_frame)
-
-    # Exit the loop if 'q' is pressed
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        print(np.mean(landmark_losses))
-        break
-
-# Release the video capture and close the window
 og_video_capture.release()
+prac_video_capture.release()
 cv2.destroyAllWindows()
