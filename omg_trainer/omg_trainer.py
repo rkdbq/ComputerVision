@@ -1,144 +1,140 @@
-import mediapipe as mp
 import cv2
-import numpy as np
-from mediapipe import solutions
-from mediapipe.framework.formats import landmark_pb2
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton, QFileDialog, QSlider
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import Qt, QTimer
+from preprocess import frame_with_landmark, webcam_frame_with_landmark
 
-BaseOptions = mp.tasks.BaseOptions
-PoseLandmarker = mp.tasks.vision.PoseLandmarker
-PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-PoseLandmarkerResult = mp.tasks.vision.PoseLandmarkerResult
-VisionRunningMode = mp.tasks.vision.RunningMode
+class VideoPlayer(QMainWindow):
+    def __init__(self):
+        super().__init__()
 
-def draw_landmarks_on_image(rgb_image, detection_result):
-  if detection_result is None:
-    return rgb_image
-  
-  pose_landmarks_list = detection_result.pose_landmarks
-  annotated_image = np.copy(rgb_image)
+        # 윈도우 설정
+        self.setWindowTitle("Video Player")
+        self.setGeometry(200, 200, 1600, 600)
 
-  # Loop through the detected poses to visualize.
-  for idx in range(len(pose_landmarks_list)):
-    pose_landmarks = pose_landmarks_list[idx]
+        # 비디오 레이블 초기화
+        self.video_label = QLabel()
+        self.webcam_label = QLabel()
 
-    # Draw the pose landmarks.
-    pose_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
-    pose_landmarks_proto.landmark.extend([
-      landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in pose_landmarks
-    ])
-    solutions.drawing_utils.draw_landmarks(
-      annotated_image,
-      pose_landmarks_proto,
-      solutions.pose.POSE_CONNECTIONS,
-      solutions.drawing_styles.get_default_pose_landmarks_style())
-  return annotated_image
+        self.webcam = cv2.VideoCapture(0)
+        self.webcam_timer = QTimer()
+        self.webcam_timer.timeout.connect(self.update_webcam_frame)
+        self.webcam_timer.start(30)
+        self.webcam_timestamp = 0
 
-prac_landmarker_result = None
+        # 비디오 재생을 위한 타이머 설정
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_frame)
 
-def print_result(result: PoseLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
-    global prac_landmarker_result
-    prac_landmarker_result = result
+        # 비디오 파일 선택 버튼 초기화
+        self.select_button = QPushButton("Select Video")
+        self.select_button.clicked.connect(self.select_video)
 
-def calculate_loss(landmark_losses, og_detection_result, prac_detection_result):
-  if prac_detection_result is None:
-     return landmark_losses
-  if len(og_detection_result.pose_landmarks) > 0 and len(prac_detection_result.pose_landmarks) > 0:
-    og_pose_landmarks = og_detection_result.pose_landmarks[0]
-    prac_pose_landmarks = prac_detection_result.pose_landmarks[0]
+        # 재생 속도 슬라이더 초기화
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setMinimum(1)
+        self.speed_slider.setMaximum(10)
+        self.speed_slider.setValue(5)
+        self.speed_slider.valueChanged.connect(self.update_speed)
 
-    landmark_loss = []
-    for og_landmark, prac_landmark in zip(og_pose_landmarks, prac_pose_landmarks):
-        og = np.array([og_landmark.x, og_landmark.y, og_landmark.z, og_landmark.visibility])
-        prac = np.array([prac_landmark.x, prac_landmark.y, prac_landmark.z, prac_landmark.visibility])
-        loss = np.mean((og - prac)**2)
-        landmark_loss.append(loss)
+        # 레이아웃 초기화
+        video_layout = QHBoxLayout()
+        video_layout.addWidget(self.video_label)
+        video_layout.addWidget(self.webcam_label)
 
-    landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
+        layout = QVBoxLayout()
+        layout.addLayout(video_layout)
+        layout.addWidget(self.select_button)
+        layout.addWidget(self.speed_slider)
 
-  elif len(og_detection_result.pose_landmarks) > 0:
-    og_pose_landmarks = og_detection_result.pose_landmarks[0]
+        # 위젯 설정
+        widget = QWidget()
+        widget.setLayout(layout)
+        self.setCentralWidget(widget)
 
-    landmark_loss = []
-    for og_landmark in og_pose_landmarks:
-        og = np.array([og_landmark.x, og_landmark.y, og_landmark.z, og_landmark.visibility])
-        loss = np.mean(og**2)
-        landmark_loss.append(loss)
+        # 선택한 비디오 파일 경로
+        self.video_path = ""
 
-    landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
+        # 재생 속도
+        self.playback_speed = 1.0
 
-  elif len(prac_detection_result.pose_landmarks) > 0:
-    prac_pose_landmarks = prac_detection_result.pose_landmarks[0]
+    def select_video(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        file_dialog = QFileDialog()
+        file_dialog.setNameFilter("Video Files (*.mp4 *.avi)")
+        file_dialog.setFileMode(QFileDialog.ExistingFile)
+        if file_dialog.exec_():
+            selected_files = file_dialog.selectedFiles()
+            self.video_path = selected_files[0]
 
-    landmark_loss = []
-    for prac_landmark in prac_pose_landmarks:
-      prac = np.array([prac_landmark.x, prac_landmark.y, prac_landmark.z, prac_landmark.visibility])
-      loss = np.mean(prac**2)
-      landmark_loss.append(loss)
+            # 선택한 비디오 파일 열기
+            self.cap = cv2.VideoCapture(self.video_path)
 
-    landmark_losses = np.vstack((landmark_losses, np.array([landmark_loss])))
+            # 비디오 재생 시작
+            self.timer.start(30)
 
-  else:
-    landmark_losses = np.vstack((landmark_losses, np.zeros((1, 33)))) 
+    def update_speed(self):
+        # 재생 속도 슬라이더 값에 따라 재생 속도 설정
+        value = self.speed_slider.value()
+        self.playback_speed = value / 5.0
 
-  return landmark_losses
+    def update_webcam_frame(self):
+        # 비디오 프레임 읽기
+        self.webcam_timestamp += 1
+        ret, cam_frame = self.webcam.read()
 
-og_options = PoseLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path='pose_landmarker_lite.task'),
-    running_mode=VisionRunningMode.VIDEO)
+        # 프레임 읽기에 실패하면 종료
+        if not ret:
+            self.webcam_timer.stop()
+            return
+        
+        # 프레임을 QImage로 변환
+        cam_frame = cv2.cvtColor(cam_frame, cv2.COLOR_BGR2RGB)
+        cam_frame = cv2.flip(cam_frame, 1)
+        landmarked_frame = webcam_frame_with_landmark(cam_frame, self.webcam_timestamp)
+        
+        height, width, channels = landmarked_frame.shape
+        q_image = QImage(
+            landmarked_frame.data, width, height, width * channels, QImage.Format_RGB888
+        )
 
-prac_options = PoseLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path='pose_landmarker_lite.task'),
-    running_mode=VisionRunningMode.LIVE_STREAM,
-    result_callback=print_result)
+        # QImage를 QPixmap으로 변환하여 비디오 레이블에 표시
+        pixmap = QPixmap.fromImage(q_image)
+        self.webcam_label.setPixmap(pixmap.scaledToWidth(600, Qt.SmoothTransformation))
 
-og_landmarker = PoseLandmarker.create_from_options(og_options)
-prac_landmarker = PoseLandmarker.create_from_options(prac_options)
-landmark_losses = np.empty((0, 33), float)
+    def update_frame(self):
+        # 비디오 프레임 읽기
+        timestamp = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
+        ret, og_frame = self.cap.read()
 
-og_video_path = "//Users//rkdbg//Codes//CV//omg_trainer//omg1.mp4"
-og_video_capture = cv2.VideoCapture(og_video_path)
-playback_speed = 1.75
+        # 프레임 읽기에 실패하면 종료
+        if not ret:
+            self.timer.stop()
+            return
 
-prac_video_capture = cv2.VideoCapture(0)
+        # 프레임을 QImage로 변환
+        og_frame = cv2.cvtColor(og_frame, cv2.COLOR_BGR2RGB)
+        landmarked_frame = frame_with_landmark(og_frame, timestamp)
 
-frame_width = int(prac_video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-frame_height = int(prac_video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-fps = int(prac_video_capture.get(cv2.CAP_PROP_FPS))
-codec = cv2.VideoWriter_fourcc(*'XVID')  # 비디오 코덱 설정 (여기서는 XVID를 사용)
+        height, width, channels = landmarked_frame.shape
+        q_image = QImage(
+            landmarked_frame.data, width, height, width * channels, QImage.Format_RGB888
+        )
 
-# prac_recorded = cv2.VideoWriter('practice.avi', codec, fps, (frame_width, frame_height))
+        # QImage를 QPixmap으로 변환하여 비디오 레이블에 표시
+        pixmap = QPixmap.fromImage(q_image)
+        self.video_label.setPixmap(pixmap.scaledToWidth(600, Qt.SmoothTransformation))
 
-if not og_video_capture.isOpened():
-    print("Error opening video file")
-    exit()
+        # 재생 속도 적용
+        delay = int(1000 / (self.cap.get(cv2.CAP_PROP_FPS) * self.playback_speed))
 
-while og_video_capture.isOpened():
-    timestamp = int(og_video_capture.get(cv2.CAP_PROP_POS_FRAMES))
+        # 딜레이 후 타이머 재실행
+        self.timer.start(delay)
 
-    og_ret, og_frame = og_video_capture.read()
-    prac_ret, prac_frame = prac_video_capture.read()
 
-    if not og_ret:
-       break
-
-    og_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=og_frame)
-    og_landmarker_result = og_landmarker.detect_for_video(og_image, timestamp)
-
-    prac_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=prac_frame)
-    prac_landmarker.detect_async(prac_image, timestamp)
-
-    landmark_losses = calculate_loss(landmark_losses, og_landmarker_result, prac_landmarker_result)
-
-    cv2.imshow('Og', draw_landmarks_on_image(og_image.numpy_view(), og_landmarker_result))
-    cv2.imshow('Prac', draw_landmarks_on_image(prac_image.numpy_view(), prac_landmarker_result))
-
-    delay = int(1000 / (og_video_capture.get(cv2.CAP_PROP_FPS) * playback_speed))
-
-    print(np.mean(landmark_losses))
-
-    if cv2.waitKey(delay) & 0xFF == ord('q'):
-        break
-
-og_video_capture.release()
-prac_video_capture.release()
-cv2.destroyAllWindows()
+if __name__ == "__main__":
+    app = QApplication([])
+    player = VideoPlayer()
+    player.show()
+    app.exec_()
