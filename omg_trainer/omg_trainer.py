@@ -37,6 +37,7 @@ class VideoPlayer(QMainWindow):
         # 비디오 재생을 위한 타이머 설정
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
+        self.countdown_time = 3
 
         # 비디오 파일 선택 버튼 초기화
         self.select_button = QPushButton("Select Video")
@@ -103,13 +104,15 @@ class VideoPlayer(QMainWindow):
         self.audio_path = ""
 
         # 재생 속도
-        self.playback_speed = 1.0
+        self.playback_speed = 2.0
 
         self.update_score_label("댄스 동영상을 선택하고, 얼마나 비슷하게 출 수 있는지 점수를 측정해보세요.")
         self.og_title_label.setText("도전할 동영상")
         self.webcam_title_label.setText("ME")
 
     def restart_video(self):
+        self.is_start = True
+
         self.score = 0
         self.total_score = np.zeros(0)
 
@@ -125,12 +128,27 @@ class VideoPlayer(QMainWindow):
             self.video_path = selected_files[0]
             self.audio_path = change_extension(self.video_path, ".mp3")
             convert_to_mp3(self.video_path, self.audio_path)
+
+            # 3초 카운트다운 타이머 설정
+            self.countdown_timer = QTimer()
+            self.countdown_timer.timeout.connect(self.update_countdown)
+            self.countdown_timer.start(1000)  # 1초마다 타이머 작동
+            self.countdown_remaining = self.countdown_time
+
+    def update_countdown(self):
+        if self.countdown_remaining > 0:
+            self.update_score_label(str(self.countdown_remaining))
+        else:
+            self.update_score_label()
+            self.countdown_timer.stop()
             
             # 선택한 비디오 파일 열기
             self.cap = cv2.VideoCapture(self.video_path)
 
             # 비디오 재생 시작
             self.timer.start(30)
+        
+        self.countdown_remaining -= 1
 
     def update_speed(self):
         # 재생 속도 슬라이더 값에 따라 재생 속도 설정
@@ -163,7 +181,6 @@ class VideoPlayer(QMainWindow):
 
     def update_frame(self):
         # 비디오 프레임 읽기
-        # timestamp = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
         self.og_timestamp += 1
         ret, og_frame = self.cap.read()
 
@@ -194,8 +211,6 @@ class VideoPlayer(QMainWindow):
         delay = int((1000 / (self.cap.get(cv2.CAP_PROP_FPS) * self.playback_speed)))
         if self.playback_speed == 2.0:
             delay = 0
-        # print(self.playback_speed)
-        # print(delay)
 
         # 딜레이 후 타이머 재실행
         self.timer.start(delay)
